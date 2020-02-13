@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset='UTF-8' />
+        <meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate' />
+        <meta http-equiv='Pragma' content='no-cache' />
+        <meta http-equiv='Expires' content='0' />
+        <title>Media error test</title>
+        <style>
+         video {
+             width: 900px;
+             height: 500px;
+         }
+         body {
+             margin:0;
+             padding:0;
+             background-color:white;
+         }
+        </style>
+    </head>
+    <body>
+        <div>
+            <video id='videoPlayer'></video>
+        </div>
+        <script type='text/javascript'>
+         if (!window.MediaSource) {
+             throw 'No Media Source API available';
+         }
+
+         var baseUrl = 'https://storage.googleapis.com/shaka-demo-assets/angel-one-widevine-hls';
+         var initUrl = baseUrl + '/v-0576p-1400k-libx264-init.mp4';
+         var templateUrl = baseUrl + '/v-0576p-1400k-libx264-s$Number$.mp4';
+         var index = 1;
+
+         var numberOfChunksToAppend = 15;
+         var video = document.querySelector('video');
+         var ms = null;
+         var sourceBuffer = null;
+         var mediaKeysObject = null;
+         var fetchPromise = Promise.resolve();
+
+         setTimeout(runTest, 100);
+         setTimeout(finishAndCleanup, 2 * 60 *1000);
+
+         function runTest() {
+             video.addEventListener('error', onError);
+
+             var config = [{
+                 initDataTypes: ['cenc'],
+                 videoCapabilities: [
+                     { contentType: 'video/mp4; codecs="avc1.42c01e"'},
+                 ]
+             }];
+
+             navigator.requestMediaKeySystemAccess('com.widevine.alpha', config).then((keySystemAccess) => {
+                 return keySystemAccess.createMediaKeys();
+             }).then((keys) => {
+                 mediaKeysObject = keys;
+                 return video.setMediaKeys(keys);
+             }).then(() => {
+                 ms = new MediaSource();
+                 ms.addEventListener('sourceopen', onSourceOpen);
+                 ms.addEventListener('sourceclose', onSourceClose);
+                 video.src = window.URL.createObjectURL(ms);
+             }).catch((error) => {
+                 console.error('Failed to set up MediaKeys, err = ' + error);
+             });
+         }
+
+         function onError() {
+             video.removeEventListener('error', onError);
+             let err = video.error;
+             console.log("Got error code=" + err.code + ' message =' + err.message);
+             finishAndCleanup(err.message);
+         }
+
+         function finishAndCleanup(errMessage) {
+             if (!ms)
+                 return;
+
+             video.removeEventListener('error', onError);
+
+             ms = null;
+             sourceBuffer = null;
+             fetchPromise = null;
+             mediaKeysObject = null;
+             video.src = '';
+             video.setMediaKeys(null);
+
+             if (errMessage && errMessage.length > 0)
+                 document.body.innerHTML = '<h1>Test succeeded</h1>Error message: "' + errMessage + '"';
+             else
+                 document.body.innerHTML = '<h1>Test failed</h1>Error message is empty or undefined'
+         }
+
+         function onSourceOpen() {
+             console.log('onSourceOpen()');
+             ms.removeEventListener('sourceopen', onSourceOpen);
+             sourceBuffer = ms.addSourceBuffer('video/mp4; codecs="avc1.640028"');
+             sourceBuffer.addEventListener('updateend', onUpdateEnd);
+             fetchAndAppend(initUrl)
+         }
+
+         function onSourceClose() {
+             console.log('onSourceClose()');
+             if (ms) {
+                 ms.removeEventListener('sourceclose', onSourceClose);
+                 sourceBuffer = null;
+                 fetchPromise = null;
+             }
+         }
+
+         function onUpdateEnd() {
+             if (index > numberOfChunksToAppend) {
+                 sourceBuffer.removeEventListener('updateend', onUpdateEnd);
+             } else {
+                 var url = templateUrl.replace('$Number$', index);
+                 console.log('downloading chunk # ' + index);
+                 fetchAndAppend(url);
+                 index++;
+             }
+         }
+
+         function appendToBuffer(videoChunk, url) {
+             if (!sourceBuffer)
+                 return;
+             console.log('trying to append ' + videoChunk.byteLength + ' bytes from: ' + url);
+             try {
+                 sourceBuffer.appendBuffer(new Uint8Array(videoChunk));
+             } catch (e) {
+                 setTimeout(appendToBuffer, 500, videoChunk, url);
+             }
+         }
+
+         function fetchAndAppend(url) {
+             fetchPromise = fetchPromise
+                 .then(() => { return fetchChunk(url); })
+                 .then((buffer) => appendToBuffer(buffer, url) )
+                 .catch((err) => console.warn(err))
+         }
+
+         function fetchChunk(url, body) {
+             return new Promise(function(resolve, reject) {
+                 var xhr = new XMLHttpRequest();
+                 xhr.open(body ? 'POST' : 'GET', url);
+                 xhr.responseType = 'arraybuffer';
+                 xhr.onload = function(e) {
+                     if (xhr.status != 200) {
+                         console.warn();
+                         reject('Load failed. Unexpected status code ' + xhr.status + ' for ' + url);
+                         return;
+                     }
+                     resolve(xhr.response);
+                 };
+                 xhr.send(body);
+             })
+         }
+        </script>
+    </body>
+</html>

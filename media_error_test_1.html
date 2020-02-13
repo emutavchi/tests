@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset='UTF-8' />
+        <meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate' />
+        <meta http-equiv='Pragma' content='no-cache' />
+        <meta http-equiv='Expires' content='0' />
+        <title>Media error test</title>
+        <style>
+         video {
+             width: 900px;
+             height: 500px;
+         }
+         body {
+             margin:0;
+             padding:0;
+             background-color:white;
+         }
+        </style>
+    </head>
+    <body>
+        <div>
+            <video id='videoPlayer'></video>
+        </div>
+        <script type='text/javascript'>
+         var video = document.querySelector('video');
+
+         let timeoutId = setTimeout(finishAndCleanup, 10 * 1000);
+         setTimeout(runTest, 10);
+
+         function runTest() {
+             video.addEventListener('canplay', function onCanPlay() {
+                 video.removeEventListener('canplay', onCanPlay);
+                 video.play();
+             });
+
+             video.addEventListener('error', function onError() {
+                 video.removeEventListener('error', onError);
+                 let err = video.error;
+                 console.log("Got error code=" + err.code + ' message =' + err.message);
+                 finishAndCleanup(err.message);
+             });
+
+             video.src = 'http://httpstat.us/404';
+         }
+
+         function finishAndCleanup(errMessage) {
+             if (errMessage && errMessage.length > 0)
+                 document.body.innerHTML = '<h1>Test succeeded</h1>Error message = ' + errMessage;
+             else
+                 document.body.innerHTML = '<h1>Test failed</h1>Error message is empty or undefined'
+
+             clearTimeout(timeoutId);
+             video.src = ''
+         }
+        </script>
+    </body>
+</html>
