@@ -37,7 +37,7 @@
              video.addEventListener('error', function onError() {
                  video.removeEventListener('error', onError);
                  let err = video.error;
-                 console.log("Got error code=" + err.code + ' message =' + err.message);
+                 console.log("Got error code = " + err.code + ' message = ' + err.message);
                  finishAndCleanup(err.message);
              });
 
@@ -46,7 +46,7 @@
 
          function finishAndCleanup(errMessage) {
              if (errMessage && errMessage.length > 0)
-                 document.body.innerHTML = '<h1>Test succeeded</h1>Error message = ' + errMessage;
+                 document.body.innerHTML = '<h1>Test succeeded</h1>Error message: "' + errMessage + '"';
              else
                  document.body.innerHTML = '<h1>Test failed</h1>Error message is empty or undefined'
 
