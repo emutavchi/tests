@@ -24,9 +24,9 @@ px.import({
         y:0,
         w:1280,
         h:720,
-        hasApi: true,
-        focus:  true,
-        draw:   true,
+        hasApi:true,
+        focus:false,
+        draw:true,
     })
 
     browser.remoteReady.then((obj) => {
@@ -34,7 +34,10 @@ px.import({
         browserAPI.url = 'http://emutavchi.github.io/tests/text_rendering/index.html'
     })
 
-    scene.root.on("onPreKeyDown", (e) => background.a = background.a > 0 ? 0 : 1)
+    scene.root.on("onPreKeyDown", (e) => {
+        background.a = background.a > 0 ? 0 : 1
+        console.log("background.a = " + background.a)
+    })
 
 }).catch(function(err) {
     console.error('px.import failed', err)
