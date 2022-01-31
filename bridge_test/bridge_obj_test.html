@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang='en'>
+    <head>
+        <meta charset='UTF-8' />
+        <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+        <meta http-equiv="Pragma" content="no-cache" />
+        <meta http-equiv="Expires" content="0" />
+        <style>
+         body {
+             margin:0;
+             padding:0;
+             background-color:black;
+             overflow: hidden;
+         }
+         #errors {
+             position: absolute;
+             left: 100px;
+             top: 250px;
+             background-color: red;
+             font-size: xx-large;
+         }
+         #success {
+             position: absolute;
+             left: 100px;
+             top: 250px;             
+             background-color: slategrey;
+             text-align: center;
+             color: lime;
+             font-size: xx-large;
+         }
+        </style>
+    </head>
+    <body>
+        <script>
+         const expected = 'eyJqc29ucnBjIjoiMi4wIiwiaWQiOjE5LCJtZXRob2QiOiJPdmVybGF5cy4xLnNob3dUb2FzdGVyIiwicGFyYW1zIjp7InRpdGxlIjoiwqHDiXhpdG8hIDIiLCJkZXNjcmlwdGlvbiI6IjIiLCJpY29uIjoiaHR0cDovL3BsYXRjby5mdWkubG9jYWw6NTAwNTEvYXNzZXRzL2ltYWdlcy9pY29ucy9pY19jaGVja19ibHVlLnBuZyIsImFjdGlvbnMiOltdfX0='
+
+         const testMessage = '{"jsonrpc":"2.0","id":19,"method":"Overlays.1.showToaster","params":{"title":"¡Éxito! 2","description":"2","icon":"http://platco.fui.local:50051/assets/images/icons/ic_check_blue.png","actions":[]}}'
+
+
+         function testPassed() {
+             console.log('Test passed!')
+             document.body.innerHTML += '<div><span id="success"> Test passed! </span></div>'
+         }
+
+         function testFailed() {
+             console.error('Test failed!')
+             document.body.innerHTML = '<div><span id="errors"> Test failed! </span></div>'
+         }
+
+         function checkBridgeQuery(json) {
+             if (json.params === expected) {
+                 testPassed()
+             }  else {
+                 testFailed()
+             }
+         }
+
+         function sendTestMessage(socket) {
+             ServiceManager.getServiceForJavaScript('com.comcast.BridgeObject_1', (b) => b.JSMessageChanged(testMessage) )
+         }
+
+         function startTest() {
+             let uri = 'ws://127.0.0.1:9998/jsonrpc'
+             if ( window.thunder && window.thunder.token )
+                 uri += '?token=' + window.thunder.token()
+
+             let socket = new WebSocket(uri, "notification")
+             socket.addEventListener("message", function(m) {
+                 console.log('Got message: ' + m.data)
+                 let json = JSON.parse(m.data)
+                 if (json.id === 1) {
+                     sendTestMessage(socket)
+                 }
+                 else if (json.method === 'HtmlApp.bridgequery') {
+                     checkBridgeQuery(json)
+                 }
+             })
+             socket.addEventListener("error", function(err) {
+                 console.error('Socket error ' + err)
+                 testFailed()
+             })
+             socket.addEventListener("open", function() {
+                 console.log('Ready!')
+
+                 let registerMessage = {jsonrpc: "2.0",id: 1, "method": "HtmlApp.1.register", "params": { "event":"bridgequery", "id": "HtmlApp" }}
+                 socket.send(JSON.stringify(registerMessage))
+             })
+
+         }
+         document.addEventListener('DOMContentLoaded', startTest)
+        </script>
+    </body>
+</html>
