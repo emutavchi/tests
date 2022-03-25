@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset='UTF-8' />
+        <title>MSE Re-buffering test</title>
+        <style>
+         video {
+             width: 100%;
+             height: 100%;
+         }
+         body {
+             margin:0;
+             padding:0;
+             background-color:transparent;
+             overflow: hidden;
+         }
+         #stats {
+             position: absolute;
+             left: 100px;
+             top: 150px;
+             background-color: grey;
+             font-size: xx-large;
+         }
+        </style>
+    </head>
+    <body>
+        <div>
+            <video id='videoPlayer'></video>
+            <div>
+                <span id='stats'/>
+            </div>
+        </div>
+        <script type='text/javascript'>
+         if (!window.MediaSource) {
+             throw 'No Media Source API available'
+         }
+
+         var audioUrls = [
+             'https://dash.akamaized.net/akamai/bbb_30fps/bbb_a64k/bbb_a64k_$Number$.m4a'
+         ]
+         var videoUrls = [
+             'https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_320x180_200k/bbb_30fps_320x180_200k_$Number$.m4v',
+             'https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_640x360_1000k/bbb_30fps_640x360_1000k_$Number$.m4v',
+             'https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_1280x720_4000k/bbb_30fps_1280x720_4000k_$Number$.m4v',
+             'https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_1920x1080_8000k/bbb_30fps_1920x1080_8000k_$Number$.m4v'
+         ]
+         const segmentDuration = 4  // 4 seconds segments
+
+         var video = document.querySelector('video')
+         var ms = null
+         var allFeedersEnded = false
+         var feeders = []
+         var rebuffFeederIdx = 0
+         var rebuffTime = 2
+         var bufferLimitIndex = 10
+         var statsEl = document.querySelector('#stats')
+
+         document.addEventListener('DOMContentLoaded', startTest)
+
+         function startTest() {
+             ms = new MediaSource()
+             ms.addEventListener('sourceopen', onSourceOpen)
+             video.src = window.URL.createObjectURL(ms)
+             video.addEventListener('canplay', function onCanPlay() {
+                 video.removeEventListener('canplay', onCanPlay)
+                 video.play()
+             })
+             video.addEventListener('ended', function onEnded() {
+                 video.removeEventListener('ended', onEnded)
+                 cleanup()
+             })
+             video.addEventListener('timeupdate', function onTimeUpdate()  {
+                 var ct = video.currentTime
+                 if (allFeedersEnded && (ct + segmentDuration) >= bufferLimitIndex * segmentDuration) {
+                     video.removeEventListener('timeupdate', onTimeUpdate)
+                     ms.endOfStream()
+                 }
+                 else if (rebuffTime && ct >= rebuffTime) {
+                     feeders[rebuffFeederIdx].rebuffer()
+                     rebuffTime += 2
+                     rebuffFeederIdx = (rebuffFeederIdx + 1) % feeders.length
+                 }
+             })
+
+             setInterval(function() {
+                 var statsMessage
+                 if (video) {
+                     var ct = video.currentTime
+                     statsMessage = 'Video is ' + (video.paused ? 'paused' : 'playing') + ', MediaSource is ' + ms.readyState +  ', ct = ' + ct.toFixed(3)
+                 } else {
+                     statsMessage = 'Ended'
+                 }
+                 statsEl.innerHTML = statsMessage
+             }, 1000)
+         }
+
+         function cleanup() {
+             ms = null
+             feeders = []
+             video.src = ''
+             video.remove()
+             video = null
+         }
+
+         function onSourceOpen() {
+             console.log('onSourceOpen()')
+             ms.removeEventListener('sourceopen', onSourceOpen)
+
+             function onFeedEnded() {
+                 for (var i = 0; i < feeders.length; ++i)
+                     if (!feeders[i].ended)
+                         return
+                 allFeedersEnded = true
+             }
+
+             var videoBuffer = ms.addSourceBuffer('video/mp4; codecs="avc1.640028"')
+             feeders.push(new Feeder(videoBuffer, videoUrls, onFeedEnded))
+
+             let enableAudio = (new URL(document.location)).searchParams.get('audio')
+             if (enableAudio && enableAudio !== 'false') {
+                 var audioBuffer = ms.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"')
+                 feeders.push(new Feeder(audioBuffer, audioUrls, onFeedEnded))
+             }
+         }
+
+         function Feeder(sourceBuffer, templates, endedCb) {
+             this.endedCb = endedCb
+
+             this.rebuffer = function() {
+                 if (this.timemoutId) {
+                     clearTimeout(this.timemoutId)
+                     this.timemoutId = undefined
+                 }
+                 if (this.xhr) {
+                     this.xhr.abort()
+                     this.xhr = undefined
+                 }
+                 this.switchQuality = true
+                 this.sourceBuffer.abort()
+
+                 // remove ahead buffer, this will trigger fetchNext on 'updateend'
+                 var ct = video.currentTime
+                 this.sourceBuffer.remove(ct + segmentDuration, 10000)
+             }
+
+             this.appendToBuffer = function(videoChunk, url) {
+                 try {
+                     this.sourceBuffer.appendBuffer(new Uint8Array(videoChunk))
+                 } catch (e) {
+                     this.timemoutId = setTimeout(() => {
+                         this.timemoutId = undefined
+                         this.appendToBuffer(videoChunk, url)
+                     }, segmentDuration * 1000)
+                 }
+             }
+
+             this.fetchAndAppend = function(url) {
+                 var xhr = new XMLHttpRequest()
+                 xhr.open('GET', url)
+                 xhr.responseType = 'arraybuffer'
+                 xhr.onload = (e) => {
+                     if (xhr.status != 200) {
+                         console.error('Load failed. Unexpected status code ' + xhr.status + ' for ' + url)
+                         this.ended = true
+                         this.endedCb()
+                         return
+                     }
+                     this.xhr = undefined
+                     this.appendToBuffer(xhr.response, url)
+                 }
+                 xhr.send()
+                 this.xhr = xhr
+             }
+
+             this.fetchNext = function() {
+                 if (this.sourceBuffer.updating)
+                     return
+
+                 if (this.switchQuality) {
+                     this.switchQuality = false
+
+                     this.urlindex++
+                     this.urlTemplate = this.templates[this.urlindex % this.templates.length]
+
+                     var initUrl = this.urlTemplate.replace('$Number$', 0)
+                     this.fetchAndAppend(initUrl)
+
+                     var ct = video.currentTime
+                     this.fetchindex = 1 + Math.floor(ct / segmentDuration)
+                     console.log('Re-buffering with fetchindex #' + this.fetchindex + ' currentTime = ' + ct)
+                     return
+                 }
+
+                 if (this.fetchindex > bufferLimitIndex) {
+                     this.ended = true
+                     this.endedCb()
+                     return
+                 }
+
+                 var url = this.urlTemplate.replace('$Number$', this.fetchindex)
+                 this.fetchAndAppend(url)
+                 this.fetchindex++
+             }
+
+             this.ended = false
+             this.urlindex = 0
+             this.fetchindex = 0
+             this.switchQuality = false
+             this.timemoutId = undefined
+             this.xhr = undefined
+             this.templates = templates
+             this.urlTemplate = templates[this.urlindex % this.templates.length]
+             this.sourceBuffer = sourceBuffer
+             this.sourceBuffer.addEventListener('updateend', (e) => this.fetchNext())
+             this.fetchNext()
+         }
+        </script>
+    </body>
+</html>
