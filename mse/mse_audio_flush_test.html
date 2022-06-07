@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset='UTF-8' />
+        <meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate' />
+        <meta http-equiv='Pragma' content='no-cache' />
+        <meta http-equiv='Expires' content='0' />
+        <title>MSE Re-buffering test</title>
+        <style>
+         body {
+             margin:0;
+             padding:0;
+             background-color: black;
+             overflow: hidden;
+         }
+         #stats {
+             position: absolute;
+             left: 100px;
+             top: 150px;
+             background-color: grey;
+             font-size: xx-large;
+         }
+        </style>
+    </head>
+    <body>
+        <div>
+            <audio id='player' controls></audio>
+            <div>
+                <span id='stats'/>
+            </div>
+        </div>
+        <script type='text/javascript'>
+         if (!window.MediaSource) {
+             throw 'No Media Source API available'
+         }
+
+         const audioUrls = [
+             'https://dash.akamaized.net/akamai/bbb_30fps/bbb_a64k/bbb_a64k_$Number$.m4a'
+         ]
+
+         const segmentDuration = 4.0  // seconds
+         const maxFetchIdx = 10
+         var audio = document.querySelector('audio')
+         var ms = null
+         var feeder = null
+
+         document.addEventListener('DOMContentLoaded', function() {
+             setTimeout(initApp, 0)
+         })
+
+         function initApp() {
+             ms = new MediaSource()
+             ms.addEventListener('sourceopen', onSourceOpen)
+
+             audio.src = window.URL.createObjectURL(ms)
+             audio.addEventListener('canplay', function onCanPlay() {
+                 audio.removeEventListener('canplay', onCanPlay)
+                 audio.play()
+             })
+             audio.addEventListener('ended', function onEnded() {
+                 audio.removeEventListener('ended', onEnded)
+                 cleanup()
+             })
+             audio.addEventListener('timeupdate', onTimeUpdate)
+         }
+
+         function cleanup() {
+             ms = null
+             feeder = []
+             audio.src = ''
+             audio.remove()
+             audio = null
+         }
+
+         function onTimeUpdate()  {
+             var ct = audio.currentTime
+             var dur = audio.duration
+             var statsMessage = 'State = ' + (audio.paused ? 'paused' : 'playing') + ', duration = ' + dur.toFixed(3) +  ', ct = ' + ct.toFixed(3)
+             console.log(statsMessage)
+             document.querySelector('#stats').innerHTML = statsMessage
+         }
+
+         function onSourceOpen() {
+             console.log('onSourceOpen()')
+             ms.removeEventListener('sourceopen', onSourceOpen)
+             ms.duration = maxFetchIdx * segmentDuration
+             var audioBuffer = ms.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"')
+             feeder = new Feeder(audioBuffer, audioUrls, () => ms.endOfStream())
+         }
+
+         function Feeder(sourceBuffer, templates, endedCb) {
+             this.endedCb = endedCb
+
+             this.onUpdateEnd = function() {
+                 if (this.sourceBuffer.updating)
+                     return
+
+                 if (this.shouldRebufferOnce && this.fetchindex === 2) {
+                     this.shouldRebufferOnce = false
+                     this.fetchindex = 1
+                 }
+
+                 let buffered = this.sourceBuffer.buffered
+                 if (this.fetchindex > maxFetchIdx) {
+                     this.ended = true
+                     this.endedCb()
+                 } else {
+                     var url = this.urlTemplate.replace('$Number$', this.fetchindex)
+                     this.fetchAndAppend(url)
+                     this.fetchindex++
+                 }
+             }
+
+             this.appendToBuffer = function(audioChunk, url) {
+                 try {
+                     console.log('appendToBuffer: ' + url)
+                     this.sourceBuffer.appendBuffer(new Uint8Array(audioChunk))
+                 } catch (e) {
+                     this.timemoutId = setTimeout(() => {
+                         this.timemoutId = undefined
+                         this.appendToBuffer(audioChunk, url)
+                     }, segmentDuration * 1000)
+                     // console.error('Got error ' + e)
+                 }
+             }
+
+             this.fetchAndAppend = function(url) {
+                 if (this.xhr)
+                     throw 'Cannot fetch "' + url + '"'
+                 console.log('fetchAndAppend: ' + url)
+                 var xhr = new XMLHttpRequest()
+                 xhr.open('GET', url)
+                 xhr.responseType = 'arraybuffer'
+                 xhr.onload = (e) => {
+                     this.xhr = undefined
+
+                     if (xhr.status != 200) {
+                         console.error('Load failed. Unexpected status code ' + xhr.status + ' for ' + url)
+                         this.ended = true
+                         this.endedCb()
+                         return
+                     }
+                     this.appendToBuffer(xhr.response, url)
+                 }
+                 xhr.send()
+
+                 this.xhr = xhr
+             }
+
+             this.ended = false
+             this.fetchindex = 0
+             this.shouldRebufferOnce = true
+             this.timemoutId = undefined
+             this.xhr = undefined
+             this.urlTemplate = templates[0]
+             this.sourceBuffer = sourceBuffer
+             this.sourceBuffer.addEventListener('updateend', (e) => this.onUpdateEnd())
+             this.onUpdateEnd()
+         }
+        </script>
+    </body>
+</html>
