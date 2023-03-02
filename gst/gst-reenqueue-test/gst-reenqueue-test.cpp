@@ -81,49 +81,6 @@ static void print_position_per_sink(GstElement* element)
   gst_iterator_free (iter);
 }
 
-static gboolean has_paused_sink_state(GstElement* element)
-{
-  auto fold_func = [](const GValue *vitem, GValue* ret, gpointer) -> gboolean {
-    GstObject *item = GST_OBJECT(g_value_get_object (vitem));
-    if (GST_IS_BIN (item)) {
-        if (has_paused_sink_state(GST_ELEMENT(item))) {
-            g_value_set_boolean (ret, TRUE);
-            return FALSE;
-        }
-    }
-    else if (GST_IS_ELEMENT(item)){
-        GstState state;
-        gst_element_get_state(GST_ELEMENT(item), &state, NULL, 0);
-        if (state != GST_STATE_PLAYING) {
-            g_value_set_boolean (ret, TRUE);
-            return FALSE;
-        }
-    }
-    return TRUE;
-  };
-
-  GValue ret = G_VALUE_INIT;
-  GstBin *bin = GST_BIN_CAST (element);
-  GstIterator *iter = gst_bin_iterate_sinks (bin);
-
-  g_value_init (&ret, G_TYPE_BOOLEAN);
-  g_value_set_boolean (&ret, FALSE);
-
-
-  bool keep_going = true;
-  while (keep_going) {
-    GstIteratorResult ires = gst_iterator_fold (iter, fold_func, &ret, NULL);
-    if (GST_ITERATOR_RESYNC == ires) {
-        gst_iterator_resync (iter);
-        continue;
-    }
-    break;
-  }
-  gst_iterator_free (iter);
-
-  return g_value_get_boolean(&ret);
-}
-
 gboolean areAllPlaying(GstBin* bin)
 {
     static auto iterateSinks = [](GstBin* bin, GstIteratorFoldFunction foldFunc) -> gboolean {
