@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset='UTF-8' />
+        <meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate' />
+        <meta http-equiv='Pragma' content='no-cache' />
+        <meta http-equiv='Expires' content='0' />
+        <title>MSE Audio Switch Test</title>
+        <style>
+         video {
+             width: 50%;
+         }
+         body {
+             margin:2;
+             padding:0;
+             background-color: white;
+             overflow: hidden;
+         }
+        </style>
+    </head>
+    <body>
+        <div>
+            <h1 id='instructions' style='opacity:0'> Press '0' to change audio </h1>
+            <video id='videoPlayer'></video>
+        </div>
+        <script type='text/javascript'>
+         if (!window.MediaSource) {
+             throw 'No Media Source API available'
+         }
+
+         var audioDescription = {
+             initUrls: [
+                 'http://dash.akamaized.net/akamai/bbb_30fps/bbb_a64k/bbb_a64k_0.m4a',
+                 'http://livesim.dashif.org/dash/vod/testpic_2s/A48/init.mp4',
+                 'http://dash.akamaized.net/envivio/EnvivioDash3/v4_258-Header.m4s',
+                 // 'http://refapp.hbbtv.org/videos/tears_of_steel_1080p_25f75g6sv3/a1_i.mp4'
+             ],
+             segmentUrls: [
+                 'http://dash.akamaized.net/akamai/bbb_30fps/bbb_a64k/bbb_a64k_$Number$.m4a',
+                 'http://livesim.dashif.org/dash/vod/testpic_2s/A48/$Number$.m4s',
+                 'http://dash.akamaized.net/envivio/EnvivioDash3/v4_258-270146-i-$Number$.m4s',
+                 //'http://refapp.hbbtv.org/videos/tears_of_steel_1080p_25f75g6sv3/a1_$Number$.mp4'
+             ],
+             segmentDurations: [4, 2, 2]
+         }
+
+         var videoDescription = {
+             initUrls: [
+                 'http://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_1920x1080_8000k/bbb_30fps_1920x1080_8000k_0.m4v'
+             ],
+             segmentUrls: [
+                 'http://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_1920x1080_8000k/bbb_30fps_1920x1080_8000k_$Number$.m4v'
+             ],
+             segmentDurations: [4]
+         }
+
+         const testDuration = 120
+
+         var video = document.querySelector('video')
+         var ms = null
+         var feeders = []
+         var prevCurrTime
+
+         document.addEventListener('keyup', function(event) {
+             if (event.code === 'MediaPlayPause' || event.key === 'MediaPlay') {
+                 if (video.paused)
+                     video.play()
+                 else
+                     video.pause()
+             } else
+             if (event.code === 'Digit0') {
+                 changeAudio()
+             }
+         })
+
+         document.addEventListener('DOMContentLoaded', () => { setTimeout(initApp, 0); });
+
+         function initApp() {
+             ms = new MediaSource()
+             ms.addEventListener('sourceopen', onSourceOpen)
+             video.src = window.URL.createObjectURL(ms)
+             video.addEventListener('canplay', function onCanPlay() {
+                 video.removeEventListener('canplay', onCanPlay)
+                 video.play()
+             })
+             video.addEventListener('ended', function onEnded() {
+                 video.removeEventListener('ended', onEnded)
+                 cleanup()
+             })
+             video.addEventListener('timeupdate', function onTimeUpdate() {
+                 var ct = video.currentTime
+                 if (prevCurrTime && prevCurrTime > ct) {
+                     console.error("Unexpected current time!!! ct = " + ct + " prev ct = " + prevCurrTime)
+                 } else {
+                     prevCurrTime = ct
+                 }
+                 if ((ct + 1) > testDuration) {
+                     video.removeEventListener('timeupdate', onTimeUpdate)
+                     ms.endOfStream()
+                 }
+             })
+         }
+
+         function cleanup() {
+             ms = null
+             feeders = []
+             video.src = ''
+             video.remove()
+             video = null
+         }
+
+         function onSourceOpen() {
+             console.log('onSourceOpen()')
+
+             ms.removeEventListener('sourceopen', onSourceOpen)
+             ms.duration = testDuration
+
+             var videoBuffer = ms.addSourceBuffer('video/mp4; codecs="avc1.640028"')
+             feeders.push(new Feeder(videoBuffer, videoDescription))
+
+             var audioBuffer = ms.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"')
+             feeders.push(new Feeder(audioBuffer, audioDescription))
+
+             setTimeout(function() {
+                 document.getElementById("instructions").style.opacity = 'inherit';
+             }, 3000)
+         }
+
+         function changeAudio() {
+             var ct = video.currentTime
+             console.log('changeAudio, ct = ' + ct)
+             feeders[1].changeAudio(ct)
+         }
+
+         function Feeder(sourceBuffer, description) {
+             this.changeAudio = function(time) {
+                 if (this.timemoutId) {
+                     clearTimeout(this.timemoutId)
+                     this.timemoutId = undefined
+                 }
+                 if (this.xhr) {
+                     this.xhr.abort()
+                     this.xhr = undefined
+                 }
+                 this.shouldAppendInit = true
+                 this.urlindex = (this.urlindex + 1)  % this.description.initUrls.length
+                 this.fetchindex = 1 + Math.floor(time / this.description.segmentDurations[this.urlindex])
+                 this.onUpdateEnd()
+             }
+
+             this.onUpdateEnd = function() {
+                 if (this.sourceBuffer.updating)
+                     return
+
+                 let estimatedDuration = this.fetchindex * this.description.segmentDurations[this.urlindex];
+                 if (estimatedDuration > testDuration)
+                     return
+
+                 if (this.shouldAppendInit) {
+                     // if (this.sourceBuffer.buffered.length > 0) {
+                     //    this.sourceBuffer.remove(0, this.sourceBuffer.buffered.end(this.sourceBuffer.buffered - 1))
+                     //    return
+                     // }
+
+                     this.shouldAppendInit = false
+                     this.fetchAndAppend(this.description.initUrls[this.urlindex])
+                     return
+                 }
+
+                 let urlTemplate = this.description.segmentUrls[this.urlindex]
+                 var url = urlTemplate.replace('$Number$', this.fetchindex)
+                 this.fetchAndAppend(url)
+                 this.fetchindex++
+             }
+
+             this.appendToBuffer = function(videoChunk, url) {
+                 try {
+                     this.sourceBuffer.appendBuffer(new Uint8Array(videoChunk))
+                 } catch (e) {
+                     this.timemoutId = setTimeout(() => {
+                         this.timemoutId = undefined
+                         this.appendToBuffer(videoChunk, url)
+                     }, 1000)
+                 }
+             }
+
+             this.fetchAndAppend = function(url) {
+                 var xhr = new XMLHttpRequest()
+                 xhr.open('GET', url)
+                 xhr.responseType = 'arraybuffer'
+                 xhr.onload = (e) => {
+                     if (xhr.status != 200) {
+                         console.error('Load failed. Unexpected status code ' + xhr.status + ' for ' + url)
+                         return
+                     }
+                     this.xhr = undefined
+                     this.appendToBuffer(xhr.response, url)
+                 }
+                 xhr.send()
+                 this.xhr = xhr;
+             }
+
+             this.urlindex = 0
+             this.fetchindex = 1
+             this.shouldAppendInit = true
+             this.timemoutId = undefined
+             this.xhr = undefined
+             this.description = description
+             this.sourceBuffer = sourceBuffer
+             this.sourceBuffer.addEventListener('updateend', (e) => this.onUpdateEnd())
+             this.onUpdateEnd()
+         }
+        </script>
+    </body>
+</html>
