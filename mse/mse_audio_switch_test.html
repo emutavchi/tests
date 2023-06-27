@@ -21,6 +21,7 @@
     <body>
         <div>
             <h1 id='instructions' style='opacity:0'> Press '0' to change audio </h1>
+            <h2 id='track_id'></h2>
             <video id='videoPlayer'></video>
         </div>
         <script type='text/javascript'>
@@ -31,17 +32,19 @@
          var audioDescription = {
              initUrls: [
                  'https://dash.akamaized.net/akamai/bbb_30fps/bbb_a64k/bbb_a64k_0.m4a',
-                 'https://livesim.dashif.org/dash/vod/testpic_2s/A48/init.mp4',
+//                 'http://refapp.hbbtv.org/videos/tears_of_steel_1080p_25f75g6sv3/a1_i.mp4',
                  'https://dash.akamaized.net/envivio/EnvivioDash3/v4_258-Header.m4s',
-                 // 'https://refapp.hbbtv.org/videos/tears_of_steel_1080p_25f75g6sv3/a1_i.mp4'
              ],
              segmentUrls: [
                  'https://dash.akamaized.net/akamai/bbb_30fps/bbb_a64k/bbb_a64k_$Number$.m4a',
-                 'https://livesim.dashif.org/dash/vod/testpic_2s/A48/$Number$.m4s',
+//                 'http://refapp.hbbtv.org/videos/tears_of_steel_1080p_25f75g6sv3/a1_$Number$.m4s',
                  'https://dash.akamaized.net/envivio/EnvivioDash3/v4_258-270146-i-$Number$.m4s',
-                 //'https://refapp.hbbtv.org/videos/tears_of_steel_1080p_25f75g6sv3/a1_$Number$.mp4'
              ],
-             segmentDurations: [4, 2, 2]
+             segmentDurations: [
+                 4.011,
+//                 5.991,
+                 2.005
+             ],
          }
 
          var videoDescription = {
@@ -51,7 +54,7 @@
              segmentUrls: [
                  'https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_1920x1080_8000k/bbb_30fps_1920x1080_8000k_$Number$.m4v'
              ],
-             segmentDurations: [4]
+             segmentDurations: [4.011]
          }
 
          const testDuration = 120
@@ -132,6 +135,11 @@
              feeders[1].changeAudio(ct)
          }
 
+         function updateStatus(msg) {
+             document.getElementById('track_id').innerHTML = msg
+             console.log('!!! ' + msg)
+         }
+
          function Feeder(sourceBuffer, description) {
              this.changeAudio = function(time) {
                  if (this.timemoutId) {
@@ -145,25 +153,41 @@
                  this.shouldAppendInit = true
                  this.urlindex = (this.urlindex + 1)  % this.description.initUrls.length
                  this.fetchindex = 1 + Math.floor(time / this.description.segmentDurations[this.urlindex])
+                 this.sourceBuffer.abort()
+                 this.pendingSwitchEndTime = this.sourceBuffer.buffered.end(0)
                  this.onUpdateEnd()
+                 video.mute = true
+
+                 let msg = 'Switching. Current time: ' + time + ', track id: ' + this.urlindex
+                 updateStatus(msg)
              }
 
              this.onUpdateEnd = function() {
                  if (this.sourceBuffer.updating)
                      return
 
-                 let estimatedDuration = this.fetchindex * this.description.segmentDurations[this.urlindex];
-                 if (estimatedDuration > testDuration)
+                 let segmentDuration = this.description.segmentDurations[this.urlindex]
+                 let estimatedDuration = this.fetchindex * segmentDuration
+                 if ( estimatedDuration > (testDuration + segmentDuration) )
                      return
 
-                 if (this.shouldAppendInit) {
-                     // if (this.sourceBuffer.buffered.length > 0) {
-                     //    this.sourceBuffer.remove(0, this.sourceBuffer.buffered.end(this.sourceBuffer.buffered - 1))
-                     //    return
-                     // }
-
+                 if ( this.shouldAppendInit ) {
+                     if ( this.sourceBuffer.buffered.length ) {
+                         this.sourceBuffer.remove(0, this.sourceBuffer.buffered.end(this.sourceBuffer.buffered.length - 1))
+                         return
+                     }
                      this.shouldAppendInit = false
                      this.fetchAndAppend(this.description.initUrls[this.urlindex])
+                     return
+                 }
+
+                 let ct = video.currentTime
+                 if ( !this.pendingSwitchEndTime && (estimatedDuration - ct) > (4 * segmentDuration) ) {
+                     // Throttle the append
+                     this.timemoutId = setTimeout(() => {
+                         this.timemoutId = undefined
+                         this.onUpdateEnd()
+                     }, 1000)
                      return
                  }
 
@@ -171,6 +195,13 @@
                  var url = urlTemplate.replace('$Number$', this.fetchindex)
                  this.fetchAndAppend(url)
                  this.fetchindex++
+
+                 if ( this.pendingSwitchEndTime && (estimatedDuration + 1) > this.pendingSwitchEndTime ) {
+                     this.pendingSwitchEndTime = undefined
+                     let msg = 'Switch completed. Current time: ' + ct + ', track id: ' + this.urlindex
+                     updateStatus(msg)
+                     video.mute = false
+                 }
              }
 
              this.appendToBuffer = function(videoChunk, url) {
@@ -198,11 +229,13 @@
                  }
                  xhr.send()
                  this.xhr = xhr;
+                 console.log('Fetch, url = ' + url)
              }
 
              this.urlindex = 0
              this.fetchindex = 1
              this.shouldAppendInit = true
+             this.pendingSwitchEndTime = undefined
              this.timemoutId = undefined
              this.xhr = undefined
              this.description = description
