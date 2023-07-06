@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset='UTF-8' />
+        <meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate' />
+        <meta http-equiv='Pragma' content='no-cache' />
+        <meta http-equiv='Expires' content='0' />
+        <style>
+         body {
+             margin:2;
+             padding:0;
+             background-color: white;
+             overflow: hidden;
+         }
+        </style>
+    </head>
+    <body>
+        <div>
+            <h2 id="status"></h2>
+            <audio/>
+        </div>
+        <script type='text/javascript'>
+         if (!window.MediaSource) {
+             throw 'No Media Source API available'
+         }
+         if (!internals || !internals.bufferedSamplesForTrackID) {
+             throw "This test requires internals.bufferedSamplesForTrackID"
+         }
+         if (window.testRunner) {
+             testRunner.waitUntilDone();
+         }
+
+         var audioDescription = {
+             initUrls: [
+                 'http://dash.akamaized.net/envivio/EnvivioDash3/v4_258-Header.m4s',
+                 'http://refapp.hbbtv.org/videos/tears_of_steel_1080p_25f75g6sv3/a1_i.mp4',
+             ],
+             segmentUrls: [
+                 'http://dash.akamaized.net/envivio/EnvivioDash3/v4_258-270146-i-$Number$.m4s',
+                 'http://refapp.hbbtv.org/videos/tears_of_steel_1080p_25f75g6sv3/a1_$Number$.m4s',
+             ],
+             segmentDurations: [
+                 2.005,
+                 5.991
+             ],
+         }
+
+         var ms = null
+
+         document.addEventListener('DOMContentLoaded', initApp)
+
+         function initApp() {
+             ms = new MediaSource()
+             ms.addEventListener('sourceopen', testBody, { once: true })
+             document.querySelector('audio').src = window.URL.createObjectURL(ms)
+         }
+
+         async function testBody() {
+             var audioBuffer = ms.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"')
+             var feeder = new Feeder(audioBuffer, audioDescription)
+
+             // load first segment
+             await feeder.load(0, 1, 1)
+             var r1 = feeder.dumpBufferState()
+
+             // replace first segment
+             await feeder.load(1, 1, 1)
+             var r2 = feeder.dumpBufferState()
+
+             // expected all samples from first load to be removed
+             var overlapped = []
+             r2.forEach(sampleInfo => {
+                 if (r1.includes(sampleInfo))
+                     overlapped.push(sampleInfo)
+             })
+
+             if (overlapped.length != 0 || r1.length === 0 || r2.length === 0) {
+                 overlapped.forEach(sampleInfo => {
+                     console.error("Sample was not removed! " + sampleInfo)
+                 })
+                 document.getElementById("status").innerHTML = 'Test Failed! See console logs for details.';
+             } else {
+                 document.getElementById("status").innerHTML = 'Test Passed.';
+             }
+
+             if (window.testRunner) {
+                 testRunner.notifyDone();
+             }
+         }
+
+         function Feeder(sourceBuffer, description) {
+             this.dumpBufferState = function() {
+                 var result = []
+                 var audioTracks = this.sourceBuffer.audioTracks;
+                 for (var i = 0; i < audioTracks.length; ++i) {
+                     var id = audioTracks.item(i).id;
+                     var samplesInfo = internals.bufferedSamplesForTrackID(this.sourceBuffer, id)
+                     result = result.concat(samplesInfo)
+                 }
+                 return result
+             }
+
+             this.onUpdateEnd = function() {
+                 if (this.sourceBuffer.updating)
+                     return
+
+                 if (this.fetchindex === this.fetchstop) {
+                     this.pendingResolve()
+                     return
+                 }
+
+                 if (this.shouldAppendInit) {
+                     this.shouldAppendInit = false
+                     this.fetchAndAppend(this.description.initUrls[this.urlindex])
+                     return
+                 }
+
+                 var urlTemplate = this.description.segmentUrls[this.urlindex]
+                 var url = urlTemplate.replace('$Number$', this.fetchindex)
+                 this.fetchAndAppend(url)
+                 this.fetchindex++
+             }
+
+             this.fetchAndAppend = function(url) {
+                 var xhr = new XMLHttpRequest()
+                 xhr.open('GET', url)
+                 xhr.responseType = 'arraybuffer'
+                 xhr.onload = (e) => {
+                     if (xhr.status != 200) {
+                         console.error('Load failed. Unexpected status code ' + xhr.status + ' for ' + url)
+                         this.pendingReject()
+                         return
+                     }
+                     this.xhr = undefined
+                     this.sourceBuffer.appendBuffer(new Uint8Array(xhr.response))
+                 }
+                 xhr.send()
+                 this.xhr = xhr;
+                 console.log('Fetch, url = ' + url)
+             }
+
+             this.load = function(urlindex, fetchstart, fetchsize) {
+                 this.urlindex = urlindex
+                 this.fetchindex = fetchstart
+                 this.fetchstop = fetchstart + fetchsize
+                 this.shouldAppendInit = true
+
+                 var self = this
+                 var pendingPromise = new Promise((resolve, reject) => {
+                     self.pendingResolve = resolve
+                     self.pendingReject = reject
+                     self.onUpdateEnd()
+                 })
+                 return pendingPromise
+             }
+
+             this.urlindex = 0
+             this.fetchindex = 1
+             this.fetchstop = undefined
+             this.pendingResolve = null
+             this.pendingReject = null
+             this.shouldAppendInit = true
+             this.xhr = undefined
+             this.description = description
+             this.sourceBuffer = sourceBuffer
+             this.sourceBuffer.addEventListener('updateend', (e) => this.onUpdateEnd())
+         }
+        </script>
+    </body>
+</html>
