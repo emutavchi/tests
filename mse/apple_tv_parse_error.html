@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset='UTF-8' />
+        <meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate' />
+        <meta http-equiv='Pragma' content='no-cache' />
+        <meta http-equiv='Expires' content='0' />
+        <title>EME test</title>
+        <style>
+         video {
+             width: 900px;
+             height: 500px;
+         }
+         body {
+             margin:0;
+             padding:0;
+             background-color:white;
+         }
+        </style>
+    </head>
+    <body>
+        <div>
+            <video id='videoPlayer'></video>
+        </div>
+        <script type='text/javascript'>
+         var videoUrls = [
+             'https://vod-ap3-aoc.tv.apple.com/itunes-assets/HLSVideo122/v4/51/b5/b3/51b5b306-2904-3e30-5b43-866875974fec/P521688453_A1484589502_video_gr740_dovi_1024x576_--0.mp4',
+             'https://vod-ap3-aoc.tv.apple.com/itunes-assets/HLSVideo122/v4/51/b5/b3/51b5b306-2904-3e30-5b43-866875974fec/P521688453_A1484589502_video_gr740_dovi_1024x576_--3.m4s',
+             'https://vod-ap3-aoc.tv.apple.com/itunes-assets/HLSVideo116/v4/bf/c1/f4/bfc1f403-8a4e-9e1f-aaa1-b7031123a6d6/P604672123_A1698775776_video_gr740_dovi_1024x576_--0.mp4',
+             'https://vod-ap3-aoc.tv.apple.com/itunes-assets/HLSVideo116/v4/bf/c1/f4/bfc1f403-8a4e-9e1f-aaa1-b7031123a6d6/P604672123_A1698775776_video_gr740_dovi_1024x576_--1.m4s',
+             'https://vod-ap3-aoc.tv.apple.com/itunes-assets/HLSVideo116/v4/bf/c1/f4/bfc1f403-8a4e-9e1f-aaa1-b7031123a6d6/P604672123_A1698775776_video_gr740_dovi_1024x576_--2.m4s'
+         ]
+         var videoType = 'video/mp4;codecs=dvh1.05.06'
+         var video = document.querySelector('video')
+
+         setTimeout(runTest, 0)
+
+         async function runTest() {
+             video.addEventListener('error', function onError() {
+                 video.removeEventListener('error', onError)
+                 let err = video.error
+                 console.error('Video error, code=' + err.code + ', message =' + err.message)
+             })
+
+             try {
+                 var sourceBuffer = await new Promise((resolve) => {
+                     var ms = new MediaSource()
+                     ms.addEventListener('sourceopen', function onSourceOpen() {
+                         ms.removeEventListener('sourceopen', onSourceOpen)
+                         resolve(ms.addSourceBuffer(videoType))
+                     })
+                     video.src = window.URL.createObjectURL(ms)
+                 })
+                 for (const url of videoUrls)
+                     await fetchAndAppend(url, sourceBuffer)
+             } catch (e) {
+                 console.error('Test failed, err = ' + e)
+                 return
+             }
+
+             console.log('Test succeeded!')
+
+             // cleanup
+             window.URL.revokeObjectURL(video.src)
+             video.removeAttribute('src')
+             video.load()
+         }
+
+         function fetchAndAppend(url, sourceBuffer) {
+             return new Promise((resolve, reject) => {
+                 var xhr = new XMLHttpRequest()
+                 xhr.open('GET', url)
+                 xhr.responseType = 'arraybuffer'
+                 xhr.onload = function(e) {
+                     try {
+                         if (xhr.status != 200)
+                             throw 'Load failed. Unexpected status code ' + xhr.status + ' for ' + url
+                         var onUpdateEnd = function() {
+                             sourceBuffer.removeEventListener('updateend', onUpdateEnd)
+                             sourceBuffer.removeEventListener('error', onError)
+                             var buffStr = ''
+                             for (var i = 0; i < sourceBuffer.buffered.length; ++i)
+                                 buffStr +=  (i == 0 ? '[' : ', [') + sourceBuffer.buffered.start(i) + ', ' + sourceBuffer.buffered.end(i) + ']'
+                             console.log('Append completed: url = ' + url + ', buffered = ' + buffStr)
+                             resolve()
+                         }
+                         var onError = function() {
+                             sourceBuffer.removeEventListener('updateend', onUpdateEnd)
+                             sourceBuffer.removeEventListener('error', onError)
+                             reject("Append error")
+                         }
+                         sourceBuffer.addEventListener('updateend', onUpdateEnd)
+                         sourceBuffer.addEventListener('error', onError)
+                         sourceBuffer.appendBuffer(new Uint8Array(xhr.response))
+                     } catch (e) {
+                         reject(e)
+                     }
+                 }
+                 xhr.send()
+             })
+         }
+        </script>
+    </body>
+</html>
