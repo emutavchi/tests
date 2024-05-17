@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset='UTF-8' />
+		<meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate' />
+		<meta http-equiv='Pragma' content='no-cache' />
+		<meta http-equiv='Expires' content='0' />
+		<title>MSE Re-buffering test</title>
+		<style>
+		 video {
+			 width: 100%;
+			 height: 100%;
+		 }
+		 body {
+			 margin:0;
+			 padding:0;
+			 background-color:transparent;
+			 overflow: hidden;
+		 }
+		 #stats {
+			 position: absolute;
+			 left: 10px;
+			 top: 10px;
+			 background-color: grey;
+			 color: white;
+			 font-size: xx-large;
+		 }
+		 #errors {
+			 position: absolute;
+			 left: 10px;
+			 top: 250px;
+			 background-color: red;
+			 font-size: xx-large;
+		 }
+		</style>
+	</head>
+	<body>
+		<div>
+			<video id='videoPlayer' controls></video>
+			<div>
+				<span id='stats'/>
+			</div>
+			<div>
+				<span id='errors'/>
+			</div>
+		</div>
+		<script type='text/javascript'>
+		 const audioUrls = [
+			 'https://dash.akamaized.net/akamai/bbb_30fps/bbb_a64k/bbb_a64k_$Number$.m4a'
+		 ]
+		 const audioInitUrls = [
+			 'https://dash.akamaized.net/akamai/bbb_30fps/bbb_a64k/bbb_a64k_0.m4a'
+		 ]
+		 const videoUrls = [
+			 'https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_1280x720_4000k/bbb_30fps_1280x720_4000k_$Number$.m4v',
+		 ]
+		 const videoInitUrls = [
+			 'https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_1280x720_4000k/bbb_30fps_1280x720_4000k_0.m4v',
+		 ]
+
+		 const segmentDuration = 4.0  // seconds
+		 const beginFetchIdx = 1
+		 const endFetchIdx = 5
+
+		 let video = document.querySelector('video')
+		 let seekType = 1 // 1 = forward, 2 = rewind, 0 = none
+
+		 document.addEventListener('DOMContentLoaded', function() {
+			 setTimeout(startApp, 0)
+		 })
+
+		 function fetchAndAppend(sourceBuffer, url) {
+			 return new Promise((resolve, reject) => {
+				 sourceBuffer.addEventListener('updateend', function onUpdateEnd() {
+					 sourceBuffer.removeEventListener('updateend', onUpdateEnd)
+					 resolve()
+				 })
+
+				 console.log('fetchAndAppend: ' + url)
+				 let xhr = new XMLHttpRequest()
+				 xhr.open('GET', url)
+				 xhr.responseType = 'arraybuffer'
+				 xhr.onload = (e) => {
+					 if (xhr.status != 200) {
+						 let err = 'Load failed. Unexpected status code ' + xhr.status + ' for ' + url
+						 reject(err)
+						 return
+					 }
+					 try {
+						 console.log('appendToBuffer: ' + url)
+						 let videoChunk = new Uint8Array(xhr.response)
+						 sourceBuffer.appendBuffer(videoChunk)
+					 } catch (e) {
+						 reject('Failed to append. Error =  ' + e)
+					 }
+				 }
+				 xhr.send()
+			 })
+		 }
+
+		 function getVideoState() {
+			 if (video.ended)
+				 return 'ended'
+			 if (video.seeking)
+				 return 'seeking'
+			 if (video.paused)
+				 return 'paused'
+			return 'playing'
+		 }
+
+		 function onTimeUpdate()  {
+			 let ct = video.currentTime
+			 let dur = video.duration
+			 let buffered = video.buffered
+
+			 let statsMessage = 'State = ' + getVideoState() + ', duration = ' + dur.toFixed(3) +  ', ct = ' + ct.toFixed(3)
+
+			 if (buffered.length) {
+				 statsMessage += ' buffered ='
+				 for (let i = 0; i < buffered.length; ++i) {
+					 statsMessage += ' [' + buffered.start(i).toFixed(3) + ', ' + buffered.end(i).toFixed(3) + ')'
+				 }
+			 }
+			 console.log(statsMessage)
+			 document.querySelector('#stats').innerHTML = statsMessage
+		 }
+
+		 function cleanup() {
+			 video.removeAttribute('src')
+			 video.load()
+			 video.remove()
+			 video = null
+			 ms = null
+		 }
+
+		 async function startApp() {
+			 video.addEventListener('timeupdate', onTimeUpdate)
+
+			 video.addEventListener('seeked', () => {
+				 let ct = video.currentTime
+
+				 if (seekType === 1) {
+					 if (ct < (endFetchIdx - 2) * segmentDuration)
+						 ct = ct + 0.1
+					 else
+						 seekType = 2 // fallthrough
+				 }
+
+				 if (seekType === 2) {
+					 if (ct > 1)
+						 ct = ct - 0.1
+					 else
+						 seekType = 0 // fallthrough
+				 }
+
+				 if (seekType !== 0) {
+					 video.currentTime = ct
+				 }
+			 })
+
+			 video.addEventListener('ended', () => {
+				 cleanup()
+			 }, {once: true})
+
+			 let ms = await new Promise((resolve, reject) => {
+				 let ms = new MediaSource()
+				 ms.addEventListener('sourceopen', function onSourceOpen() {
+					 console.log('onSourceOpen()')
+					 resolve( ms )
+				 }, {once: true})
+				 video.src = window.URL.createObjectURL(ms)
+			 });
+
+			 let sourceInfos = []
+
+			 sourceInfos.push({
+				 p: Promise.resolve(),
+				 initUrls: videoInitUrls,
+				 dataUrls: videoUrls,
+				 qualityIdx: Math.floor(0),
+				 sb: ms.addSourceBuffer('video/mp4; codecs="avc1.640028"')
+			 })
+
+			 sourceInfos.push({
+				 p: Promise.resolve(),
+				 initUrls: audioInitUrls,
+				 dataUrls: audioUrls,
+				 qualityIdx: Math.floor(0),
+				 sb: ms.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"')
+			 })
+
+			 sourceInfos.forEach(function (bufInfo) {
+				 bufInfo.p = bufInfo.p.then(function() {
+					 var initUrl = bufInfo.initUrls[bufInfo.qualityIdx % bufInfo.initUrls.length]
+					 return fetchAndAppend(bufInfo.sb, initUrl)
+				 })
+			 })
+
+			 for (let i = beginFetchIdx; i < endFetchIdx; ++i) {
+				 sourceInfos.forEach(function (bufInfo)  {
+					 var idx = i
+					 bufInfo.p = bufInfo.p.then(function() {
+						 let url = bufInfo.dataUrls[bufInfo.qualityIdx]
+						 return fetchAndAppend(bufInfo.sb, url.replace('$Number$', idx))
+					 })
+				 })
+			 }
+
+			 await Promise
+				 .all(sourceInfos.map((bufInfo) => bufInfo.p))
+				 .then(() => {
+					 ms.endOfStream()
+				 })
+
+			 video.play()
+
+			 video.currentTime = 0.1
+		 }
+		</script>
+	</body>
+</html>
