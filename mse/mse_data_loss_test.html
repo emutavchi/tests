@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset='UTF-8' />
+		<meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate' />
+		<meta http-equiv='Pragma' content='no-cache' />
+		<meta http-equiv='Expires' content='0' />
+		<title>MSE Re-buffering test</title>
+		<style>
+		 video {
+			 width: 100%;
+			 height: 100%;
+		 }
+		 body {
+			 margin:0;
+			 padding:0;
+			 background-color:transparent;
+			 overflow: hidden;
+		 }
+		 #stats {
+			 position: absolute;
+			 left: 10px;
+			 top: 10px;
+			 background-color: grey;
+			 color: white;
+			 font-size: xx-large;
+		 }
+		</style>
+	</head>
+	<body>
+		<div>
+			<video id='videoPlayer' controls></video>
+			<div>
+				<span id='stats'/>
+			</div>
+		</div>
+		<script type='text/javascript'>
+		 const audioUrl = 'https://dash.akamaized.net/akamai/bbb_30fps/bbb_a64k/bbb_a64k_$Number$.m4a'
+		 const audioInitUrl = 'https://dash.akamaized.net/akamai/bbb_30fps/bbb_a64k/bbb_a64k_0.m4a'
+		 const videoUrl = 'https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_1280x720_4000k/bbb_30fps_1280x720_4000k_$Number$.m4v'
+		 const videoInitUrl = 'https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps_1280x720_4000k/bbb_30fps_1280x720_4000k_0.m4v'
+
+		 let video = document.querySelector('video')
+
+		 document.addEventListener('DOMContentLoaded', function() {
+			 setTimeout(startApp, 0)
+		 })
+
+		 function fetchAndAppend(sourceBuffer, url) {
+			 return new Promise((resolve, reject) => {
+				 sourceBuffer.addEventListener('updateend', function onUpdateEnd() {
+					 console.log("fetchAndAppend: updateend: " + url);
+					 sourceBuffer.removeEventListener('updateend', onUpdateEnd)
+					 resolve()
+				 })
+
+				 console.log('fetchAndAppend: ' + url)
+				 let xhr = new XMLHttpRequest()
+				 xhr.open('GET', url)
+				 xhr.responseType = 'arraybuffer'
+				 xhr.onload = (e) => {
+					 if (xhr.status != 200) {
+						 let err = 'Load failed. Unexpected status code ' + xhr.status + ' for ' + url
+						 reject(err)
+						 return
+					 }
+					 try {
+						 console.log('appendToBuffer: ' + url)
+						 let videoChunk = new Uint8Array(xhr.response)
+						 sourceBuffer.appendBuffer(videoChunk)
+					 } catch (e) {
+						 reject('Failed to append. Error =  ' + e)
+					 }
+				 }
+				 xhr.send()
+			 })
+		 }
+
+		 function cleanupAndReload() {
+			 video.removeAttribute('src')
+			 video.load()
+			 video.remove()
+			 video = null
+
+			 let params = new URLSearchParams(location.search);
+			 let n = parseInt(params.get('n') || '0')
+			 if (n < 100) {
+				 params.set('n', n + 1)
+				 location.search = params
+			 } else {
+				 console.log('Test finished.')
+			 }
+		 }
+
+		 async function startApp() {
+
+			 var ms;
+
+			 video.addEventListener('ended', () => {
+				 cleanupAndReload()
+			 }, {once: true})
+
+			 video.addEventListener('timeupdate', function onTimeUpdate() {
+				 let ct = video.currentTime
+				 if (ct > (video.buffered.end(0) - 1.0)) {
+					 video.removeEventListener('timeupdate', onTimeUpdate)
+					 ms.endOfStream();
+				 }
+			 })
+
+			 await new Promise((resolve, reject) => {
+				 ms = new MediaSource()
+				 ms.addEventListener('sourceopen', function onSourceOpen() {
+					 console.log('onSourceOpen()')
+					 resolve()
+				 }, {once: true})
+				 video.src = window.URL.createObjectURL(ms)
+			 });
+
+			 let audioSb = ms.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"')
+			 let videoSb = ms.addSourceBuffer('video/mp4; codecs="avc1.640028"')
+
+			 await fetchAndAppend(audioSb, audioInitUrl)
+			 await fetchAndAppend(audioSb, audioUrl.replace('$Number$', 1))
+
+			 await fetchAndAppend(videoSb, videoInitUrl)
+			 await fetchAndAppend(videoSb, videoUrl.replace('$Number$', 1))
+
+			 video.play()
+		 }
+		</script>
+	</body>
+</html>
