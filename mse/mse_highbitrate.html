@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset='UTF-8' />
+        <meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate' />
+        <meta http-equiv='Pragma' content='no-cache' />
+        <meta http-equiv='Expires' content='0' />
+        <title>MSE HighBitrate test</title>
+        <style>
+          video {
+              top: 100px;
+              left: 100px;
+              width: 420px;
+              height: 210px;
+              position: absolute;
+          }
+          body {
+              margin:0;
+              padding:0;
+              background-color:transparent;
+              overflow: hidden;
+          }
+        </style>
+    </head>
+    <body>
+        <div>
+            <video id='videoPlayer' controls></video>
+        </div>
+        <script type='text/javascript'>
+          const baseUrl = 'https://storage.googleapis.com/ytlr-cert.appspot.com/test-materials/media/'
+
+          let video = document.querySelector('video')
+
+          document.addEventListener('DOMContentLoaded', function() {
+              setTimeout(startApp, 0)
+          })
+
+          function appendChunk(sourceBuffer, url, chunk, reject) {
+              try {
+                  sourceBuffer.appendBuffer(chunk)
+              } catch (e) {
+                  if (e.code == DOMException.QUOTA_EXCEEDED_ERR) {
+                      setTimeout(() => {
+                          appendChunk(sourceBuffer, url, chunk, reject)
+                      }, 500)
+                  } else {
+                      console.log('appendToBuffer error: ' + e.code)
+                      reject()
+                  }
+              }
+          }
+
+          function createAppendLoop(sourceBuffer, url, offset, chunksize, filesize) {
+              return new Promise((resolve, reject) => {
+                  function appendLoop(sourceBuffer, url, offset, chunksize, filesize) {
+                      if (offset >= filesize) {
+                          resolve()
+                          return
+                      }
+                      if (sourceBuffer.buffered.length && sourceBuffer.appendWindowEnd - sourceBuffer.buffered.end(0) < 0.01) {
+                          resolve()
+                          return
+                      }
+                      sourceBuffer.addEventListener('updateend', function onUpdateEnd() {
+                          offset += chunksize + 1
+                          appendLoop(sourceBuffer, url, offset, chunksize, filesize)
+                          var buffStr = ''
+                          for (var i = 0; i < sourceBuffer.buffered.length; ++i)
+                              buffStr +=  (i == 0 ? '[' : ', [') + sourceBuffer.buffered.start(i) + ', ' + sourceBuffer.buffered.end(i) + ']'
+                          console.log('Append completed: buffered = ' + buffStr + ', ct = ' + video.currentTime + ', url = ' + url)
+                      }, {once: true})
+                      console.log('fetchAndAppend: ' + url)
+                      let xhr = new XMLHttpRequest()
+                      xhr.open('GET', url)
+                      xhr.setRequestHeader('Range', 'bytes=' + offset + '-' + Math.min(offset + chunksize, filesize));
+                      xhr.responseType = 'arraybuffer'
+                      xhr.onload = (e) => {
+                          if (xhr.status != 206 && xhr.status != 200) {
+                              let err = 'Load failed. Unexpected status code ' + xhr.status + ' for ' + url
+                              console.log(err)
+                              reject(err)
+                              return
+                          }
+                          appendChunk(sourceBuffer, url, new Uint8Array(xhr.response), reject)
+                      }
+                      xhr.send()
+                  }
+                  appendLoop(sourceBuffer, url, offset, chunksize, filesize)
+              })
+          }
+
+         function cleanupAndReload() {
+             video.removeAttribute('src')
+             video.load()
+             video.remove()
+             video = null
+
+             let params = new URLSearchParams(location.search);
+             let n = parseInt(params.get('n') || '0')
+             if (n < 10) {
+                 params.set('n', n + 1)
+                 location.search = params
+             } else {
+                 console.log('Test finished.')
+             }
+         }
+
+          async function startApp() {
+              /*
+              await playStream({
+                  video: {
+                      mimeType: 'video/mp4; codecs="avc1.64002a"',
+                      url: 'bbb_h264_240.mp4',
+                      filesize: 18229067
+                  },
+                  audio: {
+                      mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+                      url: 'car-20120827-8c.mp4',
+                      filesize: 2884572
+                  }
+              })
+              await playStream({
+                  video: {
+                      mimeType: 'video/mp4; codecs="avc1.64002a"',
+                      url: 'big-buck-bunny-h264-1080p-60fps.mp4',
+                      filesize: 18229067
+                  },
+                  audio: {
+                      mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+                      url: 'car-20120827-8c.mp4',
+                      filesize: 2884572
+                  }
+              })
+              await playStream({
+                  video: {
+                      mimeType: 'video/webm',
+                      url: 'big-buck-bunny-vp9-2160p-60fps.webm',
+                      filesize: 1721994529
+                  },
+                  audio: {
+                      mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+                      url: 'car-20120827-8c.mp4',
+                      filesize: 2884572
+                  }
+             })
+              */
+
+              await playStream({
+                  video: {
+                      mimeType: 'video/mp4; codecs="av01.0.09M.10.0.110.09.16.09.0"',
+                      url: 'high-bitrate/hdr-60fps/Video11_8K_HDR_PQ_Sky_and_Ocean_701_av1_hdr_3840x2160_fps=60_bitrate_kbps=314582k',
+                      filesize: 1179686093
+                  },
+                  audio: {
+                      mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+                      url: 'car-20120827-8c.mp4',
+                      filesize: 2884572
+                  }
+              })
+
+              cleanupAndReload()
+          }
+
+          async function playStream(stream) {
+              let ms = new MediaSource()
+
+              let p = new Promise ((resolve, reject) => {
+                  video.addEventListener('ended', () => {
+                      resolve()
+                      video.removeAttribute('src')
+                      video.load()
+                  }, {once: true})
+                  video.addEventListener('canplay', () => {
+                      video.play()
+                  }, {once: true})
+                  video.addEventListener('playing', () => {
+                      video.playbackRate = 2.0
+                  }, {once: true})
+                  video.addEventListener('error', () => {
+                      console.error ('video error: ' + video.error)
+                  }, {once: true})
+              })
+
+              await new Promise((resolve, reject) => {
+                  ms.addEventListener('sourceopen', function onSourceOpen() {
+                      console.log('onSourceOpen()')
+                      resolve()
+                  }, {once: true})
+                  video.src = window.URL.createObjectURL(ms)
+                  video.load()
+              })
+
+              let videoSb = ms.addSourceBuffer(stream.video.mimeType)
+              let audioSb = ms.addSourceBuffer(stream.audio.mimeType)
+
+              const duration = 16
+              videoSb.appendWindowEnd = duration
+              audioSb.appendWindowEnd = duration
+              ms.duration = duration
+
+              let videoP = createAppendLoop(videoSb, baseUrl + stream.video.url, 0, 206217952, stream.video.filesize)
+              let audioP = createAppendLoop(audioSb, baseUrl + stream.audio.url, 0, 1024 * 1024, stream.audio.filesize)
+
+              await Promise.all([videoP, audioP])
+
+              ms.endOfStream()
+
+              return p
+         }
+        </script>
+    </body>
+</html>
