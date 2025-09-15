@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+</head>
+
+<body>
+  <video id="local"  autoplay style="width: 640px; height: 480px"></video>
+  <video id="remote" autoplay style="width: 640px; height: 480px"></video>
+</body>
+
+<script>
+  function setupRemoteVideo(stream)
+  {
+      let remoteVideo = document.getElementById('remote');
+      let servers = null
+      let pc1 = new RTCPeerConnection(servers);
+      let pc2 = new RTCPeerConnection(servers);
+      pc1.onicecandidate = (event) => {
+        if (event.candidate) {
+          pc2.addIceCandidate(event.candidate);
+          console.log(`rtc opened ${JSON.stringify(event.candidate.toJSON())}`);
+        }
+      };
+      pc2.onicecandidate = (event) => {
+        if (event.candidate) {
+          pc1.addIceCandidate(event.candidate);
+          console.log(`rtc opened ${JSON.stringify(event.candidate.toJSON())}`);
+        }
+      };
+
+      let tracks = [];
+      pc2.ontrack = (event) => {
+          tracks.push(event.track)
+          console.log('rtc track added');
+          remoteVideo.srcObject = new MediaStream(tracks);
+          console.log('rtc stream added');
+      }
+      stream.getTracks().forEach(track => {
+          pc1.addTrack(track, stream);
+      });
+
+      pc1.createOffer({
+        offerToReceiveAudio: 0,
+        offerToReceiveVideo: 1
+      }).then((desc) => { 
+        console.log(`rtc offer`);
+        pc1.setLocalDescription(desc);
+        pc2.setRemoteDescription(desc);
+        return pc2.createAnswer();
+      }).then((desc) => {
+        console.log(`rtc answer`);
+        pc2.setLocalDescription(desc);
+        pc1.setRemoteDescription(desc);
+      }).then(() => {
+        console.log('rtc running'); 
+      }).catch((error) => { 
+        console.log(`rtc failed: ${error}`);
+      });
+      
+  }
+  function main(deviceId)
+  {
+      let constraints = {
+          audio: false,
+          video: { width: 432, height: 240, framerate: 24.0, deviceId }
+      }
+      navigator.mediaDevices.getUserMedia(constraints)
+          .then(function(stream) {
+              let localVideo = document.getElementById('local');
+              localVideo.srcObject = stream;
+              setupRemoteVideo(stream);
+          })
+          .catch(function(error) {
+              // Handle errors, e.g., display an error message to the user
+              console.error('Error accessing media devices:', error);
+          });
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+      navigator.mediaDevices
+          .enumerateDevices()
+          .then((devices) => {
+              let deviceId = undefined
+
+              devices.forEach((device) => {
+                  console.log(`${device.kind}: ${device.label} id = ${device.deviceId}`);
+                  if (device.label.toLowerCase().includes('webcam'))
+                      deviceId = device.deviceId
+              });
+
+              main(deviceId)
+          })
+          .catch((err) => {
+              console.error(`${err.name}: ${err.message}`);
+          });
+      
+
+  })
+</script>
+
+</html>
